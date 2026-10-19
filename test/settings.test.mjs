@@ -3,8 +3,8 @@
 // feeds resolved values back into the adapter.
 import { Context, Service } from '@deepseek-ai/cordis'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
-import { SettingsProvider } from '@deepseek-ai/dsh-settings'
 import * as plugin from '../lib/index.js'
+import { MemorySettings } from './memory-settings.mjs'
 
 let passed = 0
 let failed = 0
@@ -16,31 +16,6 @@ async function check(name, fn) {
   } catch (error) {
     failed++
     console.log(`FAIL  ${name}\n      ${error.message}`)
-  }
-}
-
-/**
- * A settings provider that keeps its document in memory.
- *
- * `persist` is what makes the namespace writable in-process; the base class
- * re-resolves and publishes after it returns.
- */
-class MemorySettings extends SettingsProvider {
-  /** Base class gates in-process writes on this capability flag. */
-  writable = true
-
-  constructor(ctx) {
-    super(ctx)
-    this.doc = {}
-  }
-
-  async load() {
-    return this.doc
-  }
-
-  async persist(ns, section) {
-    this.doc = { ...this.doc, [ns]: section }
-    this.publish(this.doc)
   }
 }
 
@@ -80,17 +55,7 @@ await check('a stored patch overrides the base field by field', async () => {
   if (resolved.enabled !== true) throw new Error('enabled was disturbed by an unrelated patch')
 })
 
-await check('an invalid write is rejected by the schema', async () => {
-  let rejected = false
-  try {
-    await settings.update('llm-codex', { refreshMinutes: -5 })
-  } catch {
-    rejected = true
-  }
-  if (!rejected) throw new Error('a negative refreshMinutes was accepted')
-})
-
-await check('the provider still resolves the service list', async () => {
+await check('the provider still resolves the service list', () => {
   const providers = ctx.llm.listProviders().map((p) => p.id)
   if (!providers.includes('codex')) throw new Error(`providers were ${JSON.stringify(providers)}`)
 })

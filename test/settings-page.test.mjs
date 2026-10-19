@@ -9,8 +9,8 @@
 // reconcile with the served route is the failure mode worth ruling out.
 import { Context } from '@deepseek-ai/cordis'
 import LlmRuntime, { LlmAdapter } from '@deepseek-ai/dsh-llm'
-import { SettingsProvider } from '@deepseek-ai/dsh-settings'
 import * as plugin from '../lib/index.js'
+import { MemorySettings } from './memory-settings.mjs'
 
 let passed = 0
 let failed = 0
@@ -23,13 +23,6 @@ async function check(name, fn) {
     failed++
     console.log(`FAIL  ${name}\n      ${error.message}`)
   }
-}
-
-class MemorySettings extends SettingsProvider {
-  writable = true
-  constructor(ctx) { super(ctx); this.doc = {} }
-  async load() { return this.doc }
-  async persist(ns, section) { this.doc = { ...this.doc, [ns]: section }; this.publish(this.doc) }
 }
 
 /** Mount the plugin and hand back the live registries. */

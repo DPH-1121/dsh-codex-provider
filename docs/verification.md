@@ -6,7 +6,7 @@ What was actually run, and what it proved.
 
 | Item | Value |
 |---|---|
-| Harness CLI | `dsh 0.1.6-alpha.1` (alpha channel) |
+| Harness CLI | `dsh 0.2.1-rc.2` (next channel) |
 | Node | `v24.14.0` (`D:\tools\nodejs`) |
 | Isolation | `DSH_HOME` pointed at a scratch directory; production harness untouched |
 | Credential | ChatGPT Plus session at `~/.codex/auth.json`, read-only |
