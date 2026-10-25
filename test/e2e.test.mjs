@@ -165,6 +165,23 @@ await test('the request carries the required Codex headers and body', async () =
   assert.equal(body.input[0].content[0].text, 'hi')
 })
 
+await test('model requests report the same client version as the catalog', async () => {
+  const s = await stub({
+    '/models': (req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(CATALOG) },
+    '/responses': (req, res) => sse(res, TEXT_TURN),
+  })
+  const adapter = adapterFor(s.baseURL, { config: { clientVersion: '9.9.9' } })
+  await drain(adapter.stream({ provider: PROVIDER_ID, model: 'gpt-6-astra', messages: [userMessage('hi')] }))
+  await s.stop()
+
+  // The backend gates newer models by client version, so a default literal
+  // here gets a model the catalog just listed refused as unsupported.
+  assert.match(s.captured.find((c) => c.url.startsWith('/models')).url, /client_version=9\.9\.9/)
+  const call = s.captured.find((c) => c.url === '/responses')
+  assert.equal(call.headers.version, '9.9.9')
+  assert.match(call.headers['user-agent'], /\/9\.9\.9/)
+})
+
 await test('a tool turn emits reasoning and tool-call blocks and finishes tool-calls', async () => {
   const s = await stub({
     '/models': (req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(CATALOG) },
