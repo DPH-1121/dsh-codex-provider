@@ -138,11 +138,14 @@ llm-codex: catalog resolved from the backend (7 models served)
 ## 功能
 
 - **流式输出**：SSE 逐帧转换，边生成边显示。
-- **工具调用**：`function_call` / `function_call_output` 与 DSH 的 `tool-call` / `tool-result` 双向映射，按 `call_id` 关联。
+- **工具调用**：`function_call` / `function_call_output` 与 DSH 的 `tool-call` 块及工具结果双向映射，按 `call_id` 关联。工具结果既支持 DSH 0.2.1 起的 `tool` 角色消息，也支持旧版的 `tool-result` 块；`developer` 角色消息保持原角色发送。
 - **推理档位**：后端上报的档位直接映射（`low` / `medium` / `high` / `xhigh` / `max` / `ultra`）。不支持的档位**明确报错，不做静默钳制**。
 - **思考内容**：`reasoning_summary` 事件转成独立的 reasoning 块，与正文分开渲染。
 - **图片输入**：通过 attachment 服务解析后转成 `input_image` data URL；无法读取时降级为可见占位文本，而不是静默丢弃。
 - **多轮历史**：助手轮次与工具结果按 Responses 规范回放。
+- **推理续接**：与 Codex CLI 一致，请求 `reasoning.encrypted_content`，把加密推理存入助手消息的 `replayState`，在后续请求中按原输出顺序回放（不带条目 id，因为 `store: false` 时后端不保存任何条目）。只回放给产生它的同一模型。
+- **提示缓存**：与 Codex CLI 一致，以会话 id 作为 `prompt_cache_key` 发送。
+- **联网搜索（可选，默认关闭）**：`webSearch` 设为 `live` 或 `cached` 时，请求附带后端托管的 `web_search` 工具，即 Codex 在同一订阅上使用的那个。开启后同名的 DSH `web_search` 函数工具会被隐藏；搜索在后端执行，不经过 DSH 的工具审批。搜索动作显示为思考块，正文未链接的引用以 `Sources:` 列表附在文末。
 - **用量显示**：Host 侧 `codexUsage` 服务读取订阅剩余额度。
 
 ### 对事件名变化的容错
@@ -190,6 +193,10 @@ llm-codex:
   maxRequestImageBytes: 4194304          # 单张图片编码后上限
   clientVersion: ''                      # 空 = 从本机 Codex 安装自动探测
   catalogAdditions: []                   # 额外补充的模型条目
+  replayReasoning: true                  # 请求并回放加密推理
+  reasoningSummary: auto                 # auto / concise / detailed / none
+  promptCacheKey: true                   # 以会话 id 作为 prompt_cache_key
+  webSearch: 'off'                       # live = 联网搜索；cached = 仅后端缓存索引；off = 不附带
 ```
 
 改动立即生效，无需重启。
