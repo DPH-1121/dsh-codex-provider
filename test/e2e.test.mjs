@@ -230,6 +230,29 @@ await test('history replays tool results as function_call_output', async () => {
   assert.equal(body.input[2].output, 'file body')
 })
 
+await test('a dsh 0.2.1 tool-role result is sent as function_call_output', async () => {
+  const s = await stub({
+    '/models': (req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(CATALOG) },
+    '/responses': (req, res) => sse(res, TEXT_TURN),
+  })
+  const adapter = adapterFor(s.baseURL)
+  await drain(adapter.stream({
+    provider: PROVIDER_ID,
+    model: 'gpt-6-astra',
+    messages: [
+      userMessage('read a.txt'),
+      { id: 'm2', role: 'assistant', content: [{ type: 'tool-call', id: 'call_abc', name: 'read', arguments: '{"path":"a.txt"}' }], source: { kind: 'model', provider: PROVIDER_ID, model: 'gpt-6-astra' } },
+      // Since dsh 0.2.1 the result is its own message, with the call id on it.
+      { id: 'm3', role: 'tool', toolCallId: 'call_abc', content: [{ type: 'text', text: 'file body' }], source: { kind: 'tool', callId: 'call_abc' } },
+    ],
+  }))
+  await s.stop()
+
+  const body = JSON.parse(s.captured.find((c) => c.url === '/responses').body)
+  assert.deepEqual(body.input.map((i) => i.type), ['message', 'function_call', 'function_call_output'])
+  assert.deepEqual(body.input[2], { type: 'function_call_output', call_id: 'call_abc', output: 'file body' })
+})
+
 await test('a 429 quota response raises QUOTA with a reset hint', async () => {
   const s = await stub({
     '/models': (req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(CATALOG) },

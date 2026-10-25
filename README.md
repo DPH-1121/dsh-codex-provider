@@ -138,7 +138,7 @@ llm-codex: catalog resolved from the backend (7 models served)
 ## 功能
 
 - **流式输出**：SSE 逐帧转换，边生成边显示。
-- **工具调用**：`function_call` / `function_call_output` 与 DSH 的 `tool-call` / `tool-result` 双向映射，按 `call_id` 关联。
+- **工具调用**：`function_call` / `function_call_output` 与 DSH 的 `tool-call` 块及工具结果双向映射，按 `call_id` 关联。工具结果既支持 DSH 0.2.1 起的 `tool` 角色消息，也支持旧版的 `tool-result` 块；`developer` 角色消息保持原角色发送。
 - **推理档位**：后端上报的档位直接映射（`low` / `medium` / `high` / `xhigh` / `max` / `ultra`）。不支持的档位**明确报错，不做静默钳制**。
 - **思考内容**：`reasoning_summary` 事件转成独立的 reasoning 块，与正文分开渲染。
 - **图片输入**：通过 attachment 服务解析后转成 `input_image` data URL；无法读取时降级为可见占位文本，而不是静默丢弃。

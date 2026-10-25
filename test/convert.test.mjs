@@ -633,5 +633,33 @@ test('a message item content of output_text parts is read', () => {
   assert.equal(block.block.text, 'hi there')
 })
 
+console.log('dsh 0.2.1 message roles')
+
+const toolMsg = (callId, content) => ({ id: `t-${callId}`, role: 'tool', toolCallId: callId, content, source: { kind: 'tool', callId } })
+
+test('a tool-role message becomes function_call_output for its call', () => {
+  const call = msg('assistant', [{ type: 'tool-call', id: 'call_1', name: 'read', arguments: '{"file_path":"a"}' }], { kind: 'model', provider: 'codex', model: 'gpt-x' })
+  const out = toResponsesInput({ model: 'gpt-x', messages: [msg('user', [{ type: 'text', text: 'go' }]), call, toolMsg('call_1', [{ type: 'text', text: 'file body' }])] })
+  assert.deepEqual(out.input.map((i) => i.type), ['message', 'function_call', 'function_call_output'])
+  assert.deepEqual(out.input[2], { type: 'function_call_output', call_id: 'call_1', output: 'file body' })
+})
+
+test('an unresolved image in a tool result degrades to a note in the output string', () => {
+  const out = toResponsesInput({ messages: [toolMsg('c2', [{ type: 'text', text: 'shot:' }, { type: 'image', attachment: { id: 'a' } }])] })
+  assert.equal(out.input[0].output, 'shot:\n[image omitted: not resolvable in this environment]')
+})
+
+test('a resolved image in a tool result is sent as structured output', () => {
+  const tool = toolMsg('c3', [{ type: 'text', text: 'shot:' }, { type: 'image', attachment: { id: 'a' }, resolved: { mediaType: 'image/png', base64: 'AAAA' } }])
+  const out = toResponsesInputWithImages({ messages: [msg('user', [{ type: 'text', text: 'look' }]), tool] })
+  assert.deepEqual(out.input.map((i) => i.type), ['message', 'function_call_output'])
+  assert.deepEqual(out.input[1].output, [{ type: 'input_text', text: 'shot:' }, { type: 'input_image', image_url: 'data:image/png;base64,AAAA' }])
+})
+
+test('a developer-role message keeps its role', () => {
+  const out = toResponsesInput({ messages: [{ id: 'd', role: 'developer', content: [{ type: 'text', text: 'mode changed' }], source: { kind: 'plugin', plugin: 'p' } }] })
+  assert.deepEqual(out.input[0], { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'mode changed' }] })
+})
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed === 0 ? 0 : 1)
