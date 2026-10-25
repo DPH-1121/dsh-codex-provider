@@ -165,6 +165,23 @@ await test('the request carries the required Codex headers and body', async () =
   assert.equal(body.input[0].content[0].text, 'hi')
 })
 
+await test('model requests report the same client version as the catalog', async () => {
+  const s = await stub({
+    '/models': (req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(CATALOG) },
+    '/responses': (req, res) => sse(res, TEXT_TURN),
+  })
+  const adapter = adapterFor(s.baseURL, { config: { clientVersion: '9.9.9' } })
+  await drain(adapter.stream({ provider: PROVIDER_ID, model: 'gpt-6-astra', messages: [userMessage('hi')] }))
+  await s.stop()
+
+  // The backend gates newer models by client version, so a default literal
+  // here gets a model the catalog just listed refused as unsupported.
+  assert.match(s.captured.find((c) => c.url.startsWith('/models')).url, /client_version=9\.9\.9/)
+  const call = s.captured.find((c) => c.url === '/responses')
+  assert.equal(call.headers.version, '9.9.9')
+  assert.match(call.headers['user-agent'], /\/9\.9\.9/)
+})
+
 await test('a tool turn emits reasoning and tool-call blocks and finishes tool-calls', async () => {
   const s = await stub({
     '/models': (req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(CATALOG) },
@@ -206,6 +223,33 @@ await test('tools and reasoning effort reach the request body', async () => {
   assert.equal(body.tool_choice, 'auto')
 })
 
+await test('UTF-8 text survives chunked framing, even split mid-character', async () => {
+  const words = 'I’m sure — 日本語'
+  const frames = TEXT_TURN.map((e) => {
+    if (e.type === 'response.output_text.delta' && e.delta === 'Hello') return { ...e, delta: words }
+    // The closing item carries the full text; it is what the harness stores.
+    if (e.type === 'response.output_item.done') return { ...e, item: { ...e.item, content: [{ type: 'output_text', text: `${words} world` }] } }
+    return e
+  })
+  const bytes = Buffer.from(frames.map((e) => `data: ${JSON.stringify(e)}\n\n`).join(''), 'utf8')
+  const cut = bytes.indexOf(Buffer.from('’', 'utf8')) + 1
+  const s = await stub({
+    '/models': (req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(CATALOG) },
+    '/responses': (req, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      res.write(bytes.subarray(0, cut))
+      setTimeout(() => res.end(bytes.subarray(cut)), 20)
+    },
+  })
+  const adapter = adapterFor(s.baseURL)
+  const chunks = await drain(adapter.stream({ provider: PROVIDER_ID, model: 'gpt-6-astra', messages: [userMessage('hi')] }))
+  await s.stop()
+  const deltas = chunks.filter((c) => c.type === 'text-delta').map((c) => c.text).join('')
+  assert.equal(deltas, `${words} world`)
+  const stored = chunks.find((c) => c.type === 'block-end' && c.block.type === 'text')
+  assert.equal(stored.block.text, `${words} world`)
+})
+
 await test('history replays tool results as function_call_output', async () => {
   const s = await stub({
     '/models': (req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(CATALOG) },
@@ -228,6 +272,29 @@ await test('history replays tool results as function_call_output', async () => {
   assert.deepEqual(types, ['message', 'function_call', 'function_call_output'])
   assert.equal(body.input[2].call_id, 'call_abc')
   assert.equal(body.input[2].output, 'file body')
+})
+
+await test('a dsh 0.2.1 tool-role result is sent as function_call_output', async () => {
+  const s = await stub({
+    '/models': (req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(CATALOG) },
+    '/responses': (req, res) => sse(res, TEXT_TURN),
+  })
+  const adapter = adapterFor(s.baseURL)
+  await drain(adapter.stream({
+    provider: PROVIDER_ID,
+    model: 'gpt-6-astra',
+    messages: [
+      userMessage('read a.txt'),
+      { id: 'm2', role: 'assistant', content: [{ type: 'tool-call', id: 'call_abc', name: 'read', arguments: '{"path":"a.txt"}' }], source: { kind: 'model', provider: PROVIDER_ID, model: 'gpt-6-astra' } },
+      // Since dsh 0.2.1 the result is its own message, with the call id on it.
+      { id: 'm3', role: 'tool', toolCallId: 'call_abc', content: [{ type: 'text', text: 'file body' }], source: { kind: 'tool', callId: 'call_abc' } },
+    ],
+  }))
+  await s.stop()
+
+  const body = JSON.parse(s.captured.find((c) => c.url === '/responses').body)
+  assert.deepEqual(body.input.map((i) => i.type), ['message', 'function_call', 'function_call_output'])
+  assert.deepEqual(body.input[2], { type: 'function_call_output', call_id: 'call_abc', output: 'file body' })
 })
 
 await test('a 429 quota response raises QUOTA with a reset hint', async () => {
