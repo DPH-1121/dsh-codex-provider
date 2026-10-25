@@ -12,6 +12,26 @@ What was actually run, and what it proved.
 | Credential | ChatGPT Plus session at `~/.codex/auth.json`, read-only |
 | Network | `HTTPS_PROXY=http://127.0.0.1:7897` (Clash) |
 
+## 0.2.1-rc.3 re-verification (2026-10-25)
+
+| Item | Value |
+|---|---|
+| Harness | `@deepseek-ai/dsh@0.2.1-rc.3` (npm package tree + `dsh/lib/bin.js`) |
+| Compatibility gate | passes `evaluatePluginCompatibility(manifest, {}, "0.2.1-rc.3")` from rc.3's `dsh-app-boot` |
+| Profile mount | installed into an isolated `DSH_HOME` profile; `--dump-config` composes the plugin entry with no warning |
+| Offline suite | `npm test` → ALL 9 TEST FILES PASSED (166 assertions) |
+
+**Why the suite now runs from a clean clone.** The plugin links `@deepseek-ai/dsh-llm`,
+`@deepseek-ai/dsh-attachment` and `@deepseek-ai/cordis` at runtime — the harness supplies
+them when the plugin is installed, but a bare checkout has no `node_modules`, so 6 of the 9
+files died with `ERR_MODULE_NOT_FOUND` on `@deepseek-ai/dsh-llm`. `package.json` now pins
+those three as `devDependencies` (`0.2.1-rc.3` / `^4.0.5`) with a `pnpm-lock.yaml`.
+
+**What rc.2 → rc.3 changed for this plugin: nothing it links against.** `dsh-llm` exports
+(`LlmAdapter`, `resolveRetryPolicy`), `schemastery` (3.18.5) and `cordis` (4.0.5) are
+unchanged; every file the rc.3 release touched is additive (new listing APIs in
+`dsh-llm-deepseek`, new "More menu" slots in the client UI packages).
+
 ## Offline suite
 
 ```sh

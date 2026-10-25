@@ -1,6 +1,6 @@
 {
   "name": "dsh-codex-provider",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Codex (ChatGPT) model provider for DeepSeek Harness — serves the ChatGPT subscription models the Codex CLI uses, over OAuth session credentials instead of an API key",
   "type": "module",
   "license": "MIT",
@@ -53,6 +53,11 @@
     "@deepseek-ai/dsh-attachment": {
       "optional": true
     }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.5",
+    "@deepseek-ai/dsh-attachment": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.3"
   },
   "publishedTo": "npm",
   "keywords": [
