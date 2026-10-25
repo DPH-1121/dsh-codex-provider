@@ -10,6 +10,9 @@ import {
   toResponsesInputWithImages,
   toResponsesTools,
   toTokenUsage,
+  assistantItems,
+  readReplay,
+  replayEnvelope,
 } from '../lib/convert.js'
 import { StreamTranslator } from '../lib/stream.js'
 
@@ -631,6 +634,123 @@ test('a message item content of output_text parts is read', () => {
   ])
   const block = chunks.find((c) => c.type === 'block-end' && c.block.type === 'text')
   assert.equal(block.block.text, 'hi there')
+})
+
+console.log('replay and hosted search')
+
+const modelSource = (model, items) => ({ kind: 'model', provider: 'codex', model, replayState: replayEnvelope(model, items) })
+const R1 = { type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'E1' }
+const WS = { type: 'web_search_call', id: 'ws_1', status: 'completed', action: { type: 'search', query: 'q' } }
+const replayed = (items) => msg('assistant', [
+  { type: 'reasoning', text: 'summary' },
+  { type: 'text', text: 'checking' },
+  { type: 'tool-call', id: 'c1', name: 'read', arguments: '{}' },
+], modelSource('gpt-x', items))
+
+test('replay restores reasoning and search items in output order', () => {
+  const m = replayed([{ kind: 'item', item: R1 }, { kind: 'item', item: WS }, { kind: 'message' }, { kind: 'call', callId: 'c1' }])
+  assert.deepEqual(assistantItems(m, 'gpt-x').map((i) => i.type), ['reasoning', 'web_search_call', 'message', 'function_call'])
+  const { id: _id, ...sent } = R1
+  assert.deepEqual(toResponsesInput({ model: 'gpt-x', messages: [m] }).input[0], sent)
+})
+
+test('replayed items are sent without ids, as Codex sends them with store:false', () => {
+  const m = replayed([{ kind: 'item', item: R1 }, { kind: 'item', item: WS }, { kind: 'message' }, { kind: 'call', callId: 'c1' }])
+  const items = assistantItems(m, 'gpt-x')
+  assert.ok(items.every((item) => !('id' in item)), JSON.stringify(items))
+  assert.deepEqual(items[1], { type: 'web_search_call', status: 'completed', action: { type: 'search', query: 'q' } })
+})
+
+test('text on either side of a call or a search stays on its side', () => {
+  const m = msg('assistant', [
+    { type: 'text', text: 'before' },
+    { type: 'tool-call', id: 'c1', name: 'read', arguments: '{}' },
+    { type: 'reasoning', text: 'Web search: "q"' },
+    { type: 'text', text: 'after' },
+  ], modelSource('gpt-x', [{ kind: 'message', parts: 1 }, { kind: 'call', callId: 'c1' }, { kind: 'item', item: WS }, { kind: 'message', parts: 1 }]))
+  const items = assistantItems(m, 'gpt-x')
+  assert.deepEqual(items.map((i) => i.type), ['message', 'function_call', 'web_search_call', 'message'])
+  assert.equal(items[0].content[0].text, 'before')
+  assert.equal(items[3].content[0].text, 'after')
+  // Entries recorded without a part count stand for one part each.
+  const legacy = msg('assistant', m.content, modelSource('gpt-x', [{ kind: 'message' }, { kind: 'call', callId: 'c1' }, { kind: 'message' }]))
+  assert.deepEqual(assistantItems(legacy, 'gpt-x').map((i) => i.content?.[0].text ?? i.type), ['before', 'function_call', 'after'])
+})
+
+test('a message with several text parts is replayed as one message with those parts', () => {
+  const m = msg('assistant', [{ type: 'text', text: 'first' }, { type: 'text', text: 'second' }], modelSource('gpt-x', [{ kind: 'item', item: R1 }, { kind: 'message', parts: 2 }]))
+  const items = assistantItems(m, 'gpt-x')
+  assert.deepEqual(items.map((i) => i.type), ['reasoning', 'message'])
+  assert.deepEqual(items[1].content, [{ type: 'output_text', text: 'first' }, { type: 'output_text', text: 'second' }])
+})
+
+test('with reasoning replay off, stored reasoning is withheld but search items stay', () => {
+  const m = replayed([{ kind: 'item', item: R1 }, { kind: 'item', item: WS }, { kind: 'message' }, { kind: 'call', callId: 'c1' }])
+  assert.deepEqual(assistantItems(m, 'gpt-x', { reasoning: false }).map((i) => i.type), ['web_search_call', 'message', 'function_call'])
+  assert.deepEqual(toResponsesInput({ model: 'gpt-x', messages: [m] }, { reasoning: false }).input.map((i) => i.type), ['web_search_call', 'message', 'function_call'])
+})
+
+test('an invalid part count makes the replay state malformed', () => {
+  const m = msg('assistant', [{ type: 'text', text: 'x' }], modelSource('gpt-x', [{ kind: 'message', parts: -1 }]))
+  assert.equal(readReplay(m, 'gpt-x'), undefined)
+})
+
+test('replay is skipped for a different target model', () => {
+  const m = replayed([{ kind: 'item', item: R1 }, { kind: 'message' }, { kind: 'call', callId: 'c1' }])
+  assert.equal(readReplay(m, 'gpt-y'), undefined)
+  assert.deepEqual(assistantItems(m, 'gpt-y').map((i) => i.type), ['message', 'function_call'])
+})
+
+test('foreign or malformed replay state is ignored', () => {
+  const foreign = msg('assistant', [{ type: 'text', text: 'x' }], { kind: 'model', provider: 'codex', model: 'gpt-x', replayState: { response: { kind: 'deepseek-messages', version: 1, model: 'gpt-x' }, blocks: [] } })
+  const broken = msg('assistant', [{ type: 'text', text: 'x' }], { kind: 'model', provider: 'codex', model: 'gpt-x', replayState: { response: { kind: 'codex-responses', version: 1, model: 'gpt-x' }, items: [{ kind: 'item', item: 'nope' }] } })
+  assert.equal(readReplay(foreign, 'gpt-x'), undefined)
+  assert.equal(readReplay(broken, 'gpt-x'), undefined)
+  assert.deepEqual(assistantItems(broken, 'gpt-x').map((i) => i.type), ['message'])
+})
+
+test('a reasoning item left without its following call is dropped', () => {
+  const m = msg('assistant', [{ type: 'text', text: 'partial' }], modelSource('gpt-x', [{ kind: 'message' }, { kind: 'item', item: R1 }, { kind: 'call', callId: 'gone' }]))
+  assert.deepEqual(assistantItems(m, 'gpt-x').map((i) => i.type), ['message'])
+})
+
+test('calls and text missing from the replay order are still sent', () => {
+  const m = replayed([{ kind: 'item', item: R1 }])
+  assert.deepEqual(assistantItems(m, 'gpt-x').map((i) => i.type), ['reasoning', 'message', 'function_call'])
+})
+
+test('the stream records encrypted reasoning and positions in the finish replay state', () => {
+  const t = new StreamTranslator({ model: 'gpt-x' })
+  const chunks = [
+    { type: 'response.created', response: { id: 'r', status: 'in_progress' } },
+    { type: 'response.output_item.done', output_index: 0, item: { type: 'reasoning', id: 'rs_1', summary: [{ type: 'summary_text', text: 'think' }], encrypted_content: 'E1' } },
+    { type: 'response.output_item.done', output_index: 1, item: { type: 'message', id: 'msg_1', content: [{ type: 'output_text', text: 'Reading.' }] } },
+    { type: 'response.output_item.done', output_index: 2, item: { type: 'function_call', id: 'fc_1', call_id: 'c1', name: 'read', arguments: '{}' } },
+    { type: 'response.completed', response: { id: 'r', status: 'completed', usage: { input_tokens: 1, output_tokens: 1 } } },
+  ].flatMap((e) => t.push(e)).concat(t.end())
+  const finish = chunks.find((c) => c.type === 'finish')
+  assert.equal(finish.reason.kind, 'tool-calls')
+  assert.deepEqual(finish.replayState, {
+    response: { kind: 'codex-responses', version: 1, model: 'gpt-x' },
+    items: [
+      { kind: 'item', item: { type: 'reasoning', summary: [{ type: 'summary_text', text: 'think' }], encrypted_content: 'E1' } },
+      { kind: 'message', parts: 1 },
+      { kind: 'call', callId: 'c1' },
+    ],
+  })
+})
+
+test('no replay state without encrypted reasoning, or without a model to record', () => {
+  const events = [
+    { type: 'response.output_item.done', output_index: 0, item: { type: 'reasoning', id: 'rs_1', summary: [{ type: 'summary_text', text: 'think' }] } },
+    { type: 'response.output_item.done', output_index: 1, item: { type: 'message', id: 'm', content: [{ type: 'output_text', text: 'done' }] } },
+    { type: 'response.completed', response: { id: 'r', status: 'completed' } },
+  ]
+  const plain = new StreamTranslator({ model: 'gpt-x' })
+  assert.equal(events.flatMap((e) => plain.push(e)).concat(plain.end()).find((c) => c.type === 'finish').replayState, undefined)
+  const encrypted = [{ ...events[0], item: { ...events[0].item, encrypted_content: 'E1' } }, ...events.slice(1)]
+  const off = new StreamTranslator()
+  assert.equal(encrypted.flatMap((e) => off.push(e)).concat(off.end()).find((c) => c.type === 'finish').replayState, undefined)
 })
 
 console.log('dsh 0.2.1 message roles')
