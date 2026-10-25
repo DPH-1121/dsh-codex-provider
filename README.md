@@ -145,6 +145,7 @@ llm-codex: catalog resolved from the backend (7 models served)
 - **多轮历史**：助手轮次与工具结果按 Responses 规范回放。
 - **推理续接**：与 Codex CLI 一致，请求 `reasoning.encrypted_content`，把加密推理存入助手消息的 `replayState`，在后续请求中按原输出顺序回放（不带条目 id，因为 `store: false` 时后端不保存任何条目）。只回放给产生它的同一模型。
 - **提示缓存**：与 Codex CLI 一致，以会话 id 作为 `prompt_cache_key` 发送。
+- **联网搜索（可选，默认关闭）**：`webSearch` 设为 `live` 或 `cached` 时，请求附带后端托管的 `web_search` 工具，即 Codex 在同一订阅上使用的那个。开启后同名的 DSH `web_search` 函数工具会被隐藏；搜索在后端执行，不经过 DSH 的工具审批。搜索动作显示为思考块，正文未链接的引用以 `Sources:` 列表附在文末。
 - **用量显示**：Host 侧 `codexUsage` 服务读取订阅剩余额度。
 
 ### 对事件名变化的容错
@@ -195,6 +196,7 @@ llm-codex:
   replayReasoning: true                  # 请求并回放加密推理
   reasoningSummary: auto                 # auto / concise / detailed / none
   promptCacheKey: true                   # 以会话 id 作为 prompt_cache_key
+  webSearch: 'off'                       # live = 联网搜索；cached = 仅后端缓存索引；off = 不附带
 ```
 
 改动立即生效，无需重启。

@@ -271,6 +271,29 @@ await test('a session id becomes prompt_cache_key; the new options can be switch
   assert.equal(second.reasoning, undefined)
 })
 
+await test('hosted web search is opt-in and replaces the harness tool of the same name', async () => {
+  const s = await stub({
+    '/models': (req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(CATALOG) },
+    '/responses': (req, res) => sse(res, TEXT_TURN),
+  })
+  const tools = [
+    { name: 'read', description: 'reads a file', parameters: { type: 'object' } },
+    { name: 'web_search', description: 'harness search', parameters: { type: 'object' } },
+  ]
+  for (const webSearch of [undefined, 'live', 'cached']) {
+    const adapter = adapterFor(s.baseURL, webSearch === undefined ? {} : { config: { webSearch } })
+    await drain(adapter.stream({ provider: PROVIDER_ID, model: 'gpt-6-astra', messages: [userMessage('hi')], tools }))
+  }
+  await s.stop()
+
+  const [plain, live, cached] = s.captured.filter((c) => c.url === '/responses').map((c) => JSON.parse(c.body))
+  // Off by default: the harness tools go out unchanged.
+  assert.deepEqual(plain.tools.map((tool) => tool.name), ['read', 'web_search'])
+  assert.deepEqual(live.tools.map((tool) => tool.name ?? tool.type), ['read', 'web_search'])
+  assert.deepEqual(live.tools.at(-1), { type: 'web_search', external_web_access: true })
+  assert.deepEqual(cached.tools.at(-1), { type: 'web_search', external_web_access: false })
+})
+
 await test('encrypted reasoning from one step is replayed on the next', async () => {
   const STEP = [
     { type: 'response.created', response: { id: 'resp_r', status: 'in_progress' } },

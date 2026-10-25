@@ -753,6 +753,47 @@ test('no replay state without encrypted reasoning, or without a model to record'
   assert.equal(encrypted.flatMap((e) => off.push(e)).concat(off.end()).find((c) => c.type === 'finish').replayState, undefined)
 })
 
+test('hosted search is appended and replaces a harness tool of the same name', () => {
+  const tools = [{ name: 'read', description: 'r' }, { name: 'web_search', description: 'harness search' }]
+  assert.deepEqual(toResponsesTools(tools, { webSearch: 'live' }).map((t) => t.name ?? t.type), ['read', 'web_search'])
+  assert.deepEqual(toResponsesTools(tools, { webSearch: 'live' }).at(-1), { type: 'web_search', external_web_access: true })
+  assert.equal(toResponsesTools(tools, { webSearch: 'cached' }).at(-1).external_web_access, false)
+  assert.deepEqual(toResponsesTools(tools, { webSearch: 'off' }).map((t) => t.type), ['function', 'function'])
+  assert.equal(toResponsesTools([], { webSearch: 'live' }), undefined)
+})
+
+test('the stream records reasoning, search, and positions in the finish replay state', () => {
+  const t = new StreamTranslator({ model: 'gpt-x' })
+  const chunks = [
+    { type: 'response.created', response: { id: 'r', status: 'in_progress' } },
+    { type: 'response.output_item.done', output_index: 0, item: { type: 'reasoning', id: 'rs_1', summary: [{ type: 'summary_text', text: 'think' }], encrypted_content: 'E1' } },
+    { type: 'response.output_item.done', output_index: 1, item: WS },
+    { type: 'response.output_item.done', output_index: 2, item: { type: 'message', id: 'msg_1', content: [{ type: 'output_text', text: 'Answer.', annotations: [{ type: 'url_citation', url: 'https://example.com/a', title: 'A' }] }] } },
+    { type: 'response.completed', response: { id: 'r', status: 'completed', usage: { input_tokens: 1, output_tokens: 1 } } },
+  ].flatMap((e) => t.push(e)).concat(t.end())
+  const finish = chunks.find((c) => c.type === 'finish')
+  assert.deepEqual(finish.replayState.response, { kind: 'codex-responses', version: 1, model: 'gpt-x' })
+  assert.deepEqual(finish.replayState.items.map((e) => e.kind === 'item' ? e.item.type : e.kind), ['reasoning', 'web_search_call', 'message'])
+  assert.equal(finish.replayState.items[0].item.encrypted_content, 'E1')
+  assert.ok(finish.replayState.items.every((e) => e.kind !== 'item' || !('id' in e.item)))
+  assert.deepEqual(finish.replayState.items[2], { kind: 'message', parts: 1 })
+  const blocks = chunks.filter((c) => c.type === 'block-end').map((c) => c.block)
+  assert.ok(blocks.some((b) => b.type === 'reasoning' && b.text === 'Web search: "q"'))
+  assert.equal(blocks.find((b) => b.type === 'text').text, 'Answer.\n\nSources:\n- [A](https://example.com/a)')
+})
+
+test('no replay state without encrypted reasoning or search', () => {
+  const t = new StreamTranslator({ model: 'gpt-x' })
+  const chunks = [
+    { type: 'response.output_item.done', output_index: 0, item: { type: 'reasoning', id: 'rs_1', summary: [{ type: 'summary_text', text: 'think' }] } },
+    { type: 'response.output_item.done', output_index: 1, item: { type: 'message', id: 'm', content: [{ type: 'output_text', text: 'see https://example.com/a', annotations: [{ type: 'url_citation', url: 'https://example.com/a', title: 'A' }] }] } },
+    { type: 'response.completed', response: { id: 'r', status: 'completed' } },
+  ].flatMap((e) => t.push(e)).concat(t.end())
+  assert.equal(chunks.find((c) => c.type === 'finish').replayState, undefined)
+  // A citation already linked in the text is not repeated.
+  assert.equal(chunks.filter((c) => c.type === 'block-end').map((c) => c.block).find((b) => b.type === 'text').text, 'see https://example.com/a')
+})
+
 console.log('dsh 0.2.1 message roles')
 
 const toolMsg = (callId, content) => ({ id: `t-${callId}`, role: 'tool', toolCallId: callId, content, source: { kind: 'tool', callId } })
