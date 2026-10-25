@@ -223,6 +223,33 @@ await test('tools and reasoning effort reach the request body', async () => {
   assert.equal(body.tool_choice, 'auto')
 })
 
+await test('UTF-8 text survives chunked framing, even split mid-character', async () => {
+  const words = 'I’m sure — 日本語'
+  const frames = TEXT_TURN.map((e) => {
+    if (e.type === 'response.output_text.delta' && e.delta === 'Hello') return { ...e, delta: words }
+    // The closing item carries the full text; it is what the harness stores.
+    if (e.type === 'response.output_item.done') return { ...e, item: { ...e.item, content: [{ type: 'output_text', text: `${words} world` }] } }
+    return e
+  })
+  const bytes = Buffer.from(frames.map((e) => `data: ${JSON.stringify(e)}\n\n`).join(''), 'utf8')
+  const cut = bytes.indexOf(Buffer.from('’', 'utf8')) + 1
+  const s = await stub({
+    '/models': (req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(CATALOG) },
+    '/responses': (req, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      res.write(bytes.subarray(0, cut))
+      setTimeout(() => res.end(bytes.subarray(cut)), 20)
+    },
+  })
+  const adapter = adapterFor(s.baseURL)
+  const chunks = await drain(adapter.stream({ provider: PROVIDER_ID, model: 'gpt-6-astra', messages: [userMessage('hi')] }))
+  await s.stop()
+  const deltas = chunks.filter((c) => c.type === 'text-delta').map((c) => c.text).join('')
+  assert.equal(deltas, `${words} world`)
+  const stored = chunks.find((c) => c.type === 'block-end' && c.block.type === 'text')
+  assert.equal(stored.block.text, `${words} world`)
+})
+
 await test('history replays tool results as function_call_output', async () => {
   const s = await stub({
     '/models': (req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(CATALOG) },
