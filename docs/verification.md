@@ -12,6 +12,29 @@ What was actually run, and what it proved.
 | Credential | ChatGPT Plus session at `~/.codex/auth.json`, read-only |
 | Network | `HTTPS_PROXY=http://127.0.0.1:7897` (Clash) |
 
+## 0.2.1-rc.5 re-verification (2026-11-01)
+
+| Item | Value |
+|---|---|
+| Harness | `@deepseek-ai/dsh@0.2.1-rc.5` (npm package tree + `dsh/lib/bin.js`) |
+| Compatibility gate | passes `evaluatePluginCompatibility(manifest, {}, "0.2.1-rc.5")` from rc.5's `dsh-app-boot` |
+| Profile mount | installed into an isolated `DSH_HOME` profile; `--dump-config` composes the plugin entry with no warning |
+| Offline suite | `npm test` → ALL 9 TEST FILES PASSED (166 assertions) |
+| devDependencies | `@deepseek-ai/dsh-llm` / `dsh-attachment` re-pinned `0.2.1-rc.3` → `0.2.1-rc.5` (`pnpm-lock.yaml` updated) |
+
+**What rc.3 → rc.5 changed for this plugin: nothing it links against.** Byte comparison of the
+two npm trees shows `dsh-llm`, `dsh-attachment`, `dsh-settings` and `dsh-app-boot` differing only
+in their own `package.json` version field; `cordis` (4.0.5) and `schemastery` (3.18.5) are the same
+builds. The only client-visible change in the release is additive: `dsh-client-ui-chat` gained a
+reasoning-text module and `dsh-client-ui-conversation` new locale strings.
+
+**One test-harness fix, unrelated to the version.** `test/settings-page.test.mjs` ended with
+`process.exit(...)`; on Windows that aborts the process while libuv is still closing an async
+handle (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`, exit `0xC0000409`) even though
+all 8 checks printed as passing — which made `node test/run.mjs` report "1 of 9 TEST FILES FAILED".
+The crash reproduces with rc.3 dependencies too, so it predates this release. The file now sets
+`process.exitCode` and lets the loop drain, and the suite reports 9/9.
+
 ## 0.2.1-rc.3 re-verification (2026-10-25)
 
 | Item | Value |

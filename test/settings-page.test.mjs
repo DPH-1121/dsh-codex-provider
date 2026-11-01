@@ -122,4 +122,7 @@ await check('the fallback route is usable, not just registered', async () => {
 })
 
 console.log(`\n${passed} passed, ${failed} failed`)
-process.exit(failed === 0 ? 0 : 1)
+// A forced process.exit() here aborts on Windows while libuv is still closing
+// an async handle (the UV_HANDLE_CLOSING assertion) even though every check
+// passed. Setting the exit code lets the loop drain and still fails the run.
+process.exitCode = failed === 0 ? 0 : 1
